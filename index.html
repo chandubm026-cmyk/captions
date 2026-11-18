@@ -113,7 +113,7 @@ input[type=color]{width:30px;height:28px;padding:0;border:1px solid var(--line);
   <div class="home-card">
     <div class="logo">◧ Hinglish Caption Studio</div>
     <p class="tag">Open a video → import its word-timed transcript → Hinglish conversion → animated caption styles → SRT / VTT / ASS / project files. Runs fully offline in your browser; your video never leaves this computer.</p>
-    <div class="warn" style="margin-bottom:14px"><b>HTML-only edition:</b> no speech recognition and no MP4 export here (a single file has no Whisper or ffmpeg). Transcript comes from an import (Whisper JSON / SRT / VTT); output is subtitle + project files.</div>
+    <div class="warn" style="margin-bottom:14px"><b>Browser edition:</b> auto captions use Whisper (your own cloud key, or on-device), or you can import a transcript. Output is SRT / VTT / ASS / project files — no burned-in MP4 here.</div>
     <label id="drop" class="drop"><input type="file" id="file" accept=".mp4,.mov,.webm,.mkv,.m4v,video/*" hidden>
       <div class="big">⬆ Drop a video here or click to browse</div><div class="sub">MP4 (H.264) · WebM · MOV — whatever your browser can play</div></label>
     <div id="up-progress" hidden><div class="bar"><i></i></div><div class="sub" id="up-text"></div></div>
@@ -155,11 +155,12 @@ input[type=color]{width:30px;height:28px;padding:0;border:1px solid var(--line);
           <button data-a="clearkw">Clear highlights</button>
           <hr>
           <button data-a="import">Import captions (JSON / SRT / VTT)…</button>
+          <button data-a="regen">Auto captions (Whisper)…</button>
         </div></div>
     </div>
     <div id="gen" class="gen">
       <div class="row"><label>Language</label><select id="lang"><option value="auto">Auto Detect</option><option value="hinglish" selected>Hinglish (Roman Hindi)</option><option value="hindi">Hindi (Devanagari)</option><option value="english">English</option><option value="mixed">Mixed Hindi + English</option></select></div>
-            <button class="btn wide" id="b-gen">⬇ Import captions</button><div class="dim" style="font-size:11px;margin-top:6px">Whisper word-timing JSON, SRT or VTT. Hindi is converted to Hinglish on import.</div>
+            <button class="btn wide" id="b-gen">✨ Generate Auto Captions</button><div class="dim" style="font-size:11px;margin-top:6px">Whisper speech recognition (cloud key or on-device), or import a transcript. Hindi is converted to Hinglish word by word.</div>
       <div id="steps" class="steps" hidden></div>
     </div>
     <div id="caplist" class="caplist"></div>
@@ -1484,7 +1485,7 @@ import { convertWords } from './hinglish.js';
 const $ = id => document.getElementById(id);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-let userFonts = [], tl, panels, video, ctx, lastDraw = '', stopAt = null, media = {}, videoUrl = null;
+let curFile = null, userFonts = [], tl, panels, video, ctx, lastDraw = '', stopAt = null, media = {}, videoUrl = null;
 
 function toast(msg, err) { const d = el('div', err ? 'e' : '', esc(msg)); $('toast').append(d); setTimeout(() => d.remove(), err ? 8000 : 3500); }
 const LS = {
@@ -1580,7 +1581,7 @@ async function openFile(file, opt = {}) {
   prog.hidden = true;
   if (opt.expect && Math.abs(opt.expect.duration - info.duration) > .6 && !confirm(`This video (${info.duration.toFixed(1)} s) differs from the project's video (${opt.expect.duration.toFixed(1)} s). Open anyway? Caption timings may not match.`)) return;
   const id = opt.id || hashId(fpOf(file)), saved = opt.saved !== undefined ? opt.saved : LS.get('hcs.p.' + id);
-  if (video) video.pause();
+  curFile = file; if (video) video.pause();
   $('home').hidden = true; $('app').hidden = false;
   if (!video) initEditor();
   let P = newProject(id, info);
@@ -1671,7 +1672,7 @@ function initEditor() {
   // splitter
   $('splitter').onpointerdown = e => { const sy = e.clientY, h0 = $('timeline').clientHeight; const mv = ev => { document.documentElement.style.setProperty('--tlh', Math.min(560, Math.max(180, h0 + (sy - ev.clientY))) + 'px'); }; const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); }; window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); };
   // left panel
-  $('b-gen').onclick = importDialog; $('b-addcap').onclick = () => addCaption(S.time);
+  $('b-gen').onclick = autoDialog; $('b-addcap').onclick = () => addCaption(S.time);
   $('search').oninput = e => { const q = e.target.value.toLowerCase(); [...$('caplist').children].forEach(r => r.style.display = !q || r.dataset.text.includes(q) ? '' : 'none'); };
   $('b-tools').onclick = e => { e.stopPropagation(); $('tools-menu').hidden = !$('tools-menu').hidden; };
   document.addEventListener('click', () => { $('tools-menu').hidden = true; });
@@ -1746,7 +1747,7 @@ function doMerge() { if (S.sel.size < 2) { const c = S.P.caps.find(c => S.sel.ha
 function doDelete() { if (!S.sel.size) return toast('Select captions first.', true); removeCaps([...S.sel]); }
 
 // =============================================================== IMPORT CAPTIONS (no speech recognition in the HTML-only edition)
-function updateSteps() { $('steps').hidden = true; $('b-gen').disabled = false; $('b-gen').textContent = S.P.words.length ? '↻ Replace captions (import)' : '⬇ Import captions'; }
+function updateSteps() { $('steps').hidden = true; $('b-gen').disabled = false; $('b-gen').textContent = S.P.words.length ? '↻ Regenerate Auto Captions' : '✨ Generate Auto Captions'; }
 const tcToSec = s => { const m = String(s).trim().replace(',', '.').match(/^(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/); return m ? (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + parseFloat(m[3]) : NaN; };
 function parseCues(text) {
   const out = []; text.replace(/\r/g, '').split(/\n{2,}/).forEach(b => {
@@ -1818,6 +1819,93 @@ function reseg() {
   mutate(P => { P.caps = segmentWords(P.words.slice().sort((a, b) => a.s - b.s), P.seg, P.nextId); P.nextId += P.caps.length + 1; if (P.auto.on) autoKeywords(P.words, P.caps, { max: P.auto.max, vocab: P.vocab }); S.sel = new Set(); });
 }
 
+// =============================================================== AUTO CAPTIONS (real Whisper: cloud key or on-device)
+const SR = 16000;
+async function audioMono16k(file, onStage) {
+  onStage('Reading audio from the video…');
+  const AC = window.AudioContext || window.webkitAudioContext, a = new AC();
+  let buf; try { buf = await a.decodeAudioData(await file.arrayBuffer()); } catch { a.close(); throw new Error('Could not decode the audio of this file in your browser (no audio track, or an unsupported codec/too large). Try an MP4/WebM with AAC/Opus audio, or import a transcript instead.'); }
+  a.close(); onStage('Converting to 16 kHz mono…');
+  const off = new OfflineAudioContext(1, Math.ceil(buf.duration * SR), SR), src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  return (await off.startRendering()).getChannelData(0);
+}
+function wavBlob(f32) {
+  const n = f32.length, b = new ArrayBuffer(44 + n * 2), v = new DataView(b), w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) { const x = Math.max(-1, Math.min(1, f32[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+  return new Blob([b], { type: 'audio/wav' });
+}
+const PROVIDERS = {
+  groq: { name: 'Groq (free key, whisper-large-v3)', url: 'https://api.groq.com/openai/v1/audio/transcriptions', model: 'whisper-large-v3', help: 'console.groq.com → API Keys' },
+  openai: { name: 'OpenAI (paid key, whisper-1)', url: 'https://api.openai.com/v1/audio/transcriptions', model: 'whisper-1', help: 'platform.openai.com → API keys' },
+};
+async function cloudWords(pcm, prov, key, lang, prompt, onStage, signal) {
+  const P = PROVIDERS[prov], CH = 600 * SR, words = []; const n = Math.ceil(pcm.length / CH);
+  for (let k = 0; k < n; k++) {
+    onStage(`Recognizing speech with ${prov === 'groq' ? 'Groq' : 'OpenAI'} Whisper… part ${k + 1}/${n}`, k / n);
+    const fd = new FormData(); fd.append('file', wavBlob(pcm.subarray(k * CH, (k + 1) * CH)), 'audio.wav'); fd.append('model', P.model); fd.append('response_format', 'verbose_json'); fd.append('timestamp_granularities[]', 'word'); fd.append('temperature', '0');
+    if (lang) fd.append('language', lang); if (prompt) fd.append('prompt', prompt);
+    let r; try { r = await fetch(P.url, { method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: fd, signal }); } catch (e) { if (e.name === 'AbortError') throw e; throw new Error('Network error talking to ' + prov + ' (offline, blocked by a firewall/extension, or CORS). Details: ' + e.message); }
+    if (!r.ok) { let m = ''; try { m = (await r.json()).error?.message || ''; } catch { } throw new Error(r.status === 401 ? 'The API key was rejected (401). Check that you pasted the whole key.' : r.status === 429 ? 'Rate limit reached (429). Wait a minute and retry, or use a shorter video.' : `${prov} error ${r.status}: ${m}`); }
+    const d = await r.json(); if (!d.words || !d.words.length) { if (!(d.text || '').trim()) continue; throw new Error('The service returned text but no word timestamps, so word-level sync is not possible with it.'); }
+    d.words.forEach(w => words.push({ t: String(w.word).trim(), s: w.start + k * 600, e: w.end + k * 600, c: null }));
+  }
+  if (!words.length) throw new Error('No speech was detected in this video.'); return words;
+}
+async function localWords(pcm, lang, onStage) {
+  onStage('Loading the on-device speech model library…');
+  const T = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+  const gpu = !!navigator.gpu; const opts = { device: gpu ? 'webgpu' : 'wasm', progress_callback: p => { if (p.status === 'progress') onStage(`Downloading model… ${p.file?.split('/').pop() || ''} ${Math.round(p.progress || 0)}%`, (p.progress || 0) / 100); } };
+  if (gpu) opts.dtype = { encoder_model: 'fp32', decoder_model_merged: 'q4' };
+  const asr = await T.pipeline('automatic-speech-recognition', 'onnx-community/whisper-small', opts);
+  onStage(`Recognizing speech on this device (${gpu ? 'GPU' : 'CPU — slow'})… the page may freeze for a while`);
+  const out = await asr(pcm, { return_timestamps: 'word', chunk_length_s: 30, stride_length_s: 5, task: 'transcribe', ...(lang ? { language: lang === 'hi' ? 'hindi' : 'english' } : {}) });
+  const ws = (out.chunks || []).map(c => ({ t: String(c.text).trim(), s: c.timestamp[0], e: c.timestamp[1] ?? c.timestamp[0] + .3, c: null })).filter(w => w.t);
+  if (!ws.length) throw new Error('No speech was detected in this video.'); return ws;
+}
+function commitWords(ws, uiLang, label, est = 0) {
+  const lang = uiLang === 'auto' ? 'hinglish' : uiLang; const words = finishWords(ws, lang);
+  if (S.P.words.length && !confirm('Replace the current captions with the new ones? (You can undo.)')) return false;
+  applyWords(words, { engine: label, language: lang }); closeModal(); toast(`Captions ready · ${label} · ${words.length} words`); return true;
+}
+let asrAbort = null;
+function autoDialog() {
+  modal('Auto captions', b => {
+    const saved = LS.get('hcs.asr', { prov: 'groq', key: '' });
+    b.innerHTML = `<div class="fr"><label>Language</label><div class="ctl"><select id="as-lang"><option value="hinglish">Hindi / Hinglish → Roman Hindi</option><option value="english">English</option><option value="hindi">Hindi (keep Devanagari)</option></select></div></div>
+    <h4 style="margin:14px 0 6px">A · Cloud Whisper — most accurate (recommended)</h4>
+    <div class="dim">Runs Whisper large-v3 on the provider's servers. <b>Your video's audio is sent to the provider you pick</b> (the video itself stays here). Your key is kept only in this browser. Groq's key is free: <span id="as-help"></span></div>
+    <div class="fr" style="margin-top:8px"><label>Provider</label><div class="ctl"><select id="as-prov">${Object.entries(PROVIDERS).map(([k, p]) => `<option value="${k}">${p.name}</option>`).join('')}</select></div></div>
+    <div class="fr"><label>API key</label><div class="ctl"><input type="password" id="as-key" placeholder="paste key here" autocomplete="off"></div></div>
+    <label class="chk" style="display:block;margin:6px 0"><input type="checkbox" id="as-rem" checked> Remember the key in this browser</label>
+    <div class="btnrow"><button class="btn" id="as-go">✨ Generate with cloud Whisper</button></div>
+    <h4 style="margin:18px 0 6px">B · On-device Whisper — no key, experimental</h4>
+    <div class="dim">Downloads a ~250 MB model once (from a CDN) and runs in your browser. No audio leaves your computer. Needs a recent Chrome/Edge; slow without a GPU and less accurate on Hindi than A. I could not test this path myself, so treat it as experimental.</div>
+    <div class="btnrow" style="margin-top:8px"><button id="as-local">Generate on this device</button></div>
+    <div id="as-prog" class="prog" style="margin-top:14px" hidden><div id="as-st">Starting…</div><div class="bar"><i></i></div><button class="ib" id="as-cancel">Cancel</button></div>
+    <div class="btnrow" style="margin-top:16px"><button class="ib" id="as-imp">Already have a transcript? Import JSON / SRT / VTT…</button></div>`;
+    $('as-lang').value = $('lang').value === 'auto' || $('lang').value === 'mixed' ? 'hinglish' : $('lang').value; $('as-prov').value = saved.prov; $('as-key').value = saved.key || '';
+    const help = () => $('as-help').textContent = PROVIDERS[$('as-prov').value].help; help(); $('as-prov').onchange = help; $('as-imp').onclick = importDialog;
+    const stage = (t, p) => { $('as-st').textContent = t; if (p != null) $('as-prog').querySelector('i').style.width = Math.round(p * 100) + '%'; };
+    const run = async local => {
+      const uiLang = $('as-lang').value, wl = uiLang === 'english' ? 'en' : 'hi'; const prov = $('as-prov').value, key = $('as-key').value.trim();
+      if (!local && !key) return toast('Paste your API key first.', true);
+      if (!local) LS.set('hcs.asr', { prov, key: $('as-rem').checked ? key : '' });
+      $('as-prog').hidden = false; $('as-go').disabled = $('as-local').disabled = true; asrAbort = new AbortController(); $('as-cancel').onclick = () => asrAbort.abort(); $('lang').value = uiLang;
+      try {
+        const file = curFile; if (!file) throw new Error('The video file is not available in this session. Use “Open another video” and pick it again.');
+        const pcm = await audioMono16k(file, stage);
+        const vocab = (S.P.vocab || []).map(v => v.dst).filter(Boolean).join(', ');
+        const prompt = uiLang === 'english' ? vocab : ('हिंदी में बोलचाल की बातचीत। ' + vocab).trim();
+        const ws = local ? await localWords(pcm, wl, stage) : await cloudWords(pcm, prov, key, wl, prompt, stage, asrAbort.signal);
+        commitWords(ws, uiLang, local ? 'whisper-small (on-device)' : PROVIDERS[prov].model);
+      } catch (e) { if (e.name === 'AbortError') toast('Cancelled.'); else { $('as-st').innerHTML = `<span class="err">${esc(e.message)}</span>`; toast(e.message, true); } }
+      finally { if ($('as-go')) $('as-go').disabled = $('as-local').disabled = false; asrAbort = null; }
+    };
+    $('as-go').onclick = () => run(false); $('as-local').onclick = () => run(true);
+  });
+}
+
 // =============================================================== TOOLS MENU
 function toolAction(a) {
   $('tools-menu').hidden = true;
@@ -1829,7 +1917,7 @@ function toolAction(a) {
   if (a === 'autokw') return mutate(P => autoKeywords(P.words, P.caps, { max: P.auto.max, vocab: P.vocab }));
   if (a === 'clearkw') return mutate(P => P.words.forEach(w => { w.k = ''; w.man = false; }));
   if (a === 'import') return importWords();
-  
+  if (a === 'regen') return autoDialog();
 }
 let reviewIdx = -1;
 function reviewNext() {
